@@ -4,7 +4,7 @@
 
 IBusBM IBus;
 
-// System 1: 4-Wheel Mecanum Chassis (DC Open-Loop)
+// System 1: 4-Wheel Mecanum Chassis
 const int pwmPin[4] = {7, 6, 5, 4};   
 const int in1Pin[4] = {46, 38, 36, 34};
 const int in2Pin[4] = {47, 39, 37, 35};
@@ -13,7 +13,7 @@ const int basePWM[4]  = {45, 45, 45, 45};
 const int maxPWM[4]   = {255, 255, 255, 255}; 
 const bool dirInvert[4] = {false, false, true, true}; 
 
-// System 2: 5th Axis Mechanism (DC PID Closed-Loop)
+// System 2: 5th Axis Mechanism (PID)
 const int mechEncA = 2; 
 const int mechEncB = 3; 
 const int mechPwm  = 12; 
@@ -33,27 +33,24 @@ float integral = 0;
 
 unsigned long lastTime = 0;
 
-// System 3: Auxiliary Mechanism (Forward/Reverse Open-Loop)
+// System 3: Auxiliary Mechanism
 const int auxPwm = 11;
 const int auxIn1 = 26;
 const int auxIn2 = 27;
 const int auxSpeed = 100; 
 
-// System 4: CAN Bus (MKS Servo Motor)
+// System 4: CAN Bus (MKS Servo)
 MCP2515 mcp2515(53); 
-// Record CH8 state (-1: undefined, 0: 1000 stop, 1: 1500 up, 2: 2000 down)
-int lastCh8State = -1; 
+int lastCh8State = -1; // -1: undefined, 0: stop, 1: up, 2: down
 
-// Interrupt Service Routine for 5th axis encoder
 void isrMech() { 
-  if(digitalRead(mechEncB) == HIGH) {
+  if (digitalRead(mechEncB) == HIGH) {
     mechPulses++; 
   } else {
     mechPulses--; 
   }
 }
 
-// Chassis motor driver function
 void setChassisMotor(int i, int speed) {
   if (speed == 0) {
     digitalWrite(in1Pin[i], HIGH);
@@ -64,9 +61,11 @@ void setChassisMotor(int i, int speed) {
     if (dirInvert[i]) wantForward = !wantForward;
 
     if (wantForward) { 
-      digitalWrite(in1Pin[i], LOW);  digitalWrite(in2Pin[i], HIGH); 
+      digitalWrite(in1Pin[i], LOW);  
+      digitalWrite(in2Pin[i], HIGH); 
     } else { 
-      digitalWrite(in1Pin[i], HIGH); digitalWrite(in2Pin[i], LOW); 
+      digitalWrite(in1Pin[i], HIGH); 
+      digitalWrite(in2Pin[i], LOW); 
     }
 
     int outPWM = abs(speed);
@@ -76,7 +75,6 @@ void setChassisMotor(int i, int speed) {
   }
 }
 
-// Read and map RC receiver channel
 int getJoyValue(int channel) {
   int val = IBus.readChannel(channel);
   if (val == 0) return 0; 
@@ -85,7 +83,6 @@ int getJoyValue(int channel) {
   return mapped;
 }
 
-// Construct and send CAN command to MKS motor
 void calculateAndSendCAN(uint16_t id, uint8_t mode, uint16_t speed, uint8_t acc, int32_t targetVal) {
   struct can_frame canMsg;
   canMsg.can_id = id;
@@ -121,15 +118,14 @@ void calculateAndSendCAN(uint16_t id, uint8_t mode, uint16_t speed, uint8_t acc,
       canMsg.data[6] = targetVal & 0xFF;
       break;
       
-    // Mode 5 (Speed Mode 0xF6) - Continuous rotation
     case 5: 
       funcCode = 0xF6;
       canMsg.data[0] = funcCode;
-      canMsg.data[1] = (targetVal >= 0) ? 0 : 1; // Use targetVal for direction (>=0 CW, <0 CCW)
+      canMsg.data[1] = (targetVal >= 0) ? 0 : 1; 
       canMsg.data[2] = (speed >> 8) & 0xFF;
       canMsg.data[3] = speed & 0xFF;
       canMsg.data[4] = acc;
-      canMsg.data[5] = 0; // Speed mode does not require position coordinates
+      canMsg.data[5] = 0; 
       canMsg.data[6] = 0;
       break;
   }
@@ -138,14 +134,12 @@ void calculateAndSendCAN(uint16_t id, uint8_t mode, uint16_t speed, uint8_t acc,
   for (int i = 0; i < 7; i++) sum += canMsg.data[i];
   canMsg.data[7] = sum & 0xFF;
 
-  mcp2515.sendMessage(&canMsg); // Send CAN frame
+  mcp2515.sendMessage(&canMsg);
 }
 
 void setup() {
-  Serial.begin(115200);
   IBus.begin(Serial1); 
 
-  // Initialize chassis
   for (int i = 0; i < 4; i++) {
     pinMode(pwmPin[i], OUTPUT);
     pinMode(in1Pin[i], OUTPUT);
@@ -155,7 +149,6 @@ void setup() {
     analogWrite(pwmPin[i], 0);
   }
 
-  // Initialize 5th axis
   pinMode(mechPwm, OUTPUT);
   pinMode(mechIn1, OUTPUT);
   pinMode(mechIn2, OUTPUT);
@@ -163,7 +156,6 @@ void setup() {
   pinMode(mechEncB, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(mechEncA), isrMech, RISING);
 
-  // Initialize auxiliary mechanism
   pinMode(auxPwm, OUTPUT);
   pinMode(auxIn1, OUTPUT);
   pinMode(auxIn2, OUTPUT);
@@ -171,12 +163,9 @@ void setup() {
   digitalWrite(auxIn2, LOW);
   analogWrite(auxPwm, 0);
 
-  // Initialize MCP2515 CAN module
   mcp2515.reset();
   mcp2515.setBitrate(CAN_500KBPS, MCP_8MHZ); 
   mcp2515.setNormalMode();
-
-  Serial.println("=== All 4 systems initialized: Chassis + PID + Aux + CAN Bus ===");
 }
 
 void loop() {
@@ -215,7 +204,7 @@ void loop() {
       }
     }
 
-    // System 2: 5th Axis PID Control (CH7)
+    // System 2: 5th Axis PID Control
     int ch6 = IBus.readChannel(6); 
     if (ch6 > 1500) mechTarget = -2700; 
     else mechTarget = 0;   
@@ -244,18 +233,21 @@ void loop() {
     bool wantForward = (output > 0);
 
     if (abs(error) <= deadband) { 
-      digitalWrite(mechIn1, LOW);  digitalWrite(mechIn2, LOW); 
+      digitalWrite(mechIn1, LOW);  
+      digitalWrite(mechIn2, LOW); 
       analogWrite(mechPwm, 255);
     } else {
       if (wantForward) {
-        digitalWrite(mechIn1, LOW);  digitalWrite(mechIn2, HIGH);
+        digitalWrite(mechIn1, LOW);  
+        digitalWrite(mechIn2, HIGH);
       } else {
-        digitalWrite(mechIn1, HIGH); digitalWrite(mechIn2, LOW);
+        digitalWrite(mechIn1, HIGH); 
+        digitalWrite(mechIn2, LOW);
       }
       analogWrite(mechPwm, finalPWM);
     }
 
-    // System 3: Auxiliary Mechanism (CH9 Forward, CH10 Reverse)
+    // System 3: Auxiliary Mechanism
     int ch9  = IBus.readChannel(8); 
     int ch10 = IBus.readChannel(9); 
 
@@ -273,38 +265,27 @@ void loop() {
       analogWrite(auxPwm, 0);
     }
 
-    // System 4: CAN Bus MKS Control (CH8 3-pos switch: 1000 stop, 1500 up, 2000 down)
+    // System 4: CAN Bus MKS Control
     int ch8 = IBus.readChannel(7); 
     int currentCh8State = -1; 
 
     if (ch8 > 1800) {
-      currentCh8State = 2; // 2000 state
+      currentCh8State = 2; // Down
     } else if (ch8 > 1300 && ch8 < 1700) {
-      currentCh8State = 1; // 1500 state
+      currentCh8State = 1; // Up
     } else if (ch8 > 800 && ch8 <= 1300) { 
-      currentCh8State = 0; // 1000 state
+      currentCh8State = 0; // Stop
     }
 
-    // Check if state changed to prevent CAN bus congestion
     if (currentCh8State != -1 && currentCh8State != lastCh8State) {
-      
       if (currentCh8State == 1) {
-        // 1500 (Up) -> Speed mode, continuous forward
         calculateAndSendCAN(1, 5, 500, 2, 1);
-        Serial.println("CH8 (1500): Move up command sent");
-
       } else if (currentCh8State == 2) {
-        // 2000 (Down) -> Speed mode, continuous reverse
         calculateAndSendCAN(1, 5, 1500, 2, -1);
-        Serial.println("CH8 (2000): Move down command sent");
-
       } else if (currentCh8State == 0) {
-        // 1000 (Stop) -> Speed mode, stop
         calculateAndSendCAN(1, 5, 500, 2, 1);
-        Serial.println("CH8 (1000): Stop command sent");
       }
-      
-      lastCh8State = currentCh8State; // Update state
+      lastCh8State = currentCh8State;
     }
 
     lastTime = now;
